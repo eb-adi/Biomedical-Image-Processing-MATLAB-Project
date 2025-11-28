@@ -1,1 +1,81 @@
+% Add EMG noise to your simulated EEG
+clearvars -except fs t N eeg alpha_freq alpha_wave alpha_periods; close all;
+
+fs = 250;             
+t = 0:1/fs:20;       
+N = length(t);
+
+rng(0);
+eeg = 0.8*randn(1, N);
+
+alpha_freq = 10;
+alpha_wave = sin(2*pi*alpha_freq*t);
+
+alpha_periods = [2 3; 6 7; 9 10; 13 14; 18 19];
+for i = 1:size(alpha_periods,1)
+    idx = (t >= alpha_periods(i,1)) & (t <= alpha_periods(i,2));
+    eeg(idx) = eeg(idx) + alpha_wave(idx);
+end
+
+
+emg_amp = 0.6;          % base amplitude of EMG noise (adjustable)
+emg_band = [20 80];     % EMG frequency content (Hz)
+emg_filter_order = 4;   % bandpass filter order
+use_bursty = true;      % switch: false = continuous EMG, true = bursty EMG
+
+
+white_noise = randn(1, N);
+
+% bandpass filter
+[b_emg, a_emg] = butter(emg_filter_order, emg_band/(fs/2), 'bandpass');
+emg_bandlimited = filtfilt(b_emg, a_emg, white_noise);
+
+if ~use_bursty
+    % Continuous EMG
+    emg_noise = emg_amp * emg_bandlimited;
+else
+    
+    envelope_raw = abs(randn(1, N));                
+   
+    [bd, ad] = butter(2, 5/(fs/2), 'low');          
+    envelope = filtfilt(bd, ad, envelope_raw);
+    envelope = envelope / max(envelope);            
+    
+    sparsity = 0.75;                                
+    thr = quantile(envelope, 1 - sparsity);
+    envelope = envelope .* (envelope > thr);       
+    
+    envelope = filtfilt(bd, ad, envelope);
+    envelope = envelope / (max(envelope) + eps);
+   
+    emg_noise = emg_amp * (emg_bandlimited .* envelope);
+end
+
+eeg_noisy = eeg + emg_noise;
+
+
+figure('Name','EMG addition','Units','normalized','Position',[0.1 0.1 0.8 0.6]);
+
+subplot(3,1,1);
+plot(t, eeg, 'b'); xlabel('Time (s)'); ylabel('Amplitude (\muV)');
+title('Original simulated EEG'); xlim([t(1) t(end)]);
+
+subplot(3,1,2);
+plot(t, emg_noise, 'k'); xlabel('Time (s)'); ylabel('EMG amp');
+title(sprintf('EMG noise (band %d-%d Hz) - %s', emg_band(1), emg_band(2), ...
+    ternary(use_bursty, 'bursty','continuous')));
+xlim([t(1) t(end)]);
+
+subplot(3,1,3);
+plot(t, eeg_noisy, 'r'); hold on;
+plot(t, eeg, 'b', 'LineWidth', 0.8); hold off;
+xlabel('Time (s)'); ylabel('Amplitude (\muV)');
+title('Noisy EEG (EEG + EMG) — red: noisy, blue: original');
+legend('Noisy EEG','Original EEG');
+xlim([t(1) t(end)]);
+
+function out = ternary(cond, a, b)
+    if cond, out = a; else out = b; end
+end
+
 
