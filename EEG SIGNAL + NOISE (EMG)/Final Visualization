@@ -1,1 +1,36 @@
+%  FINAL PLOT: Raw EEG + EMG Noise + Detected Alpha Regions
+
+figure('Name','Raw EEG + EMG Noise with Detected Alpha Regions', ...
+       'Units','normalized','Position',[0.05 0.2 0.9 0.45]);
+hold on;
+
+% --- Select original EEG signal ---
+if exist('eeg_noisy','var')
+    raw_signal = eeg_noisy;   % EEG + EMG noise
+else
+    raw_signal = eeg;         % fallback if EMG wasn't added
+end
+
+% --- Plot the raw EEG (with EMG noise) ---
+plot(t, raw_signal, 'k', 'LineWidth', 1);
+xlabel('Time (s)');
+ylabel('Amplitude (\muV)');
+title('Original EEG + EMG Noise with Detected Alpha-Wave Regions');
+xlim([t(1) t(end)]);
+
+% --- Shade detected alpha regions (from energy detection) ---
+for i = 1:cc.NumObjects
+    idx = cc.PixelIdxList{i};
+    x1 = t(idx(1));
+    x2 = t(idx(end));
+
+    % Full vertical span shading for clarity
+    y1 = min(raw_signal) - 0.15 * range(raw_signal);
+    y2 = max(raw_signal) + 0.15 * range(raw_signal);
+
+    patch([x1 x2 x2 x1], [y1 y1 y2 y2], [1 0.75 0.75], ...
+          'EdgeColor','none', 'FaceAlpha',0.45);
+end
+
+legend({'Raw EEG + EMG Noise'
 
