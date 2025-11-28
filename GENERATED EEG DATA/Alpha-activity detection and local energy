@@ -1,1 +1,141 @@
+% Parameters (tweak if needed)
+fs = 250;                % sampling rate (Hz)
+energy_win_sec = 0.2;    % window length for local energy (seconds)
+k = 1.0;                 % threshold factor: threshold = mean + k*std (slightly above mean)
+
+%% --- Ensure eeg_alpha exists: regenerate & filter if not present ---
+if ~exist('eeg_alpha','var') || ~exist('t','var') || ~exist('fs','var')
+    % Recreate the simulated EEG and alpha-filter (same as earlier)
+    fs = 250;
+    t = 0:1/fs:20;
+    N = length(t);
+    rng(0);
+    eeg = 0.8*randn(1, N);
+    alpha_freq = 10;
+    alpha_wave = sin(2*pi*alpha_freq*t);
+    alpha_periods = [2 3; 6 7; 9 10; 13 14; 18 19];
+    for i = 1:size(alpha_periods,1)
+        idx = (t >= alpha_periods(i,1)) & (t <= alpha_periods(i,2));
+        eeg(idx) = eeg(idx) + alpha_wave(idx);
+    end
+
+    % Design Butterworth bandpass for alpha (8-12 Hz)
+    alpha_band = [8 12];
+    order = 4;
+    Wn = alpha_band/(fs/2);
+    [b,a] = butter(order, Wn, 'bandpass');
+    eeg_alpha = filtfilt(b,a,eeg);
+    fprintf('Regenerated eeg_alpha (filtered) for detection.\n');
+end
+
+%% --- Compute local (short-time) energy ---
+window_samples = max(1, round(energy_win_sec * fs));
+% Short-time energy: square + moving average (use conv with ones/window_samples)
+sqr = eeg_alpha .^ 2;
+kernel = ones(1, window_samples) / window_samples;
+local_energy = conv(sqr, kernel, 'same');  % same length as signal
+
+%% --- Adaptive threshold (slightly above mean) ---
+mu = mean(local_energy);
+sigma = std(local_energy);
+threshold = mu + k * sigma;
+
+%% --- Detect periods where energy > threshold ---
+is_high = local_energy > threshold;
+
+% Find rising edges and falling edges
+d = diff([0 is_high 0]);        % pad to detect edges at boundaries
+start_idx = find(d == 1);
+end_idx   = find(d == -1) - 1;  % end index inclusive
+
+% Convert to times
+detected_intervals = [ (start_idx-1)/fs ; (end_idx-1)/fs ]';  % two cols: start(s), end(s)
+durations = detected_intervals(:,2) - detected_intervals(:,1);
+
+%% --- Display detections ---
+if isempty(detected_intervals)
+    disp('No energy bursts detected with current threshold.');
+else
+    fprintf('Detected %d alpha energy bursts:\n', size(detected_intervals,1));
+    for r = 1:size(detected_intervals,1)
+        fprintf(' %2d) Start = %.3f s, End = %.3f s, Duration = %.3f s\n', ...
+            r, detected_intervals(r,1), detected_intervals(r,2), durations(r));
+    end
+end
+
+%% --- Plots: filtered signal, local energy and threshold, markers ---
+figure('Name','Alpha-detection: Signal & Local Energy','NumberTitle','off','Position',[100 100 900 600]);
+
+subplot(3,1,1);
+plot(t, eeg_alpha);
+xlabel('Time (s)');
+ylabel('\muV');
+title('Filtered EEG (alpha 8-12 Hz)');
+xlim([t(1) t(end)]);
+
+% mark detected intervals on signal
+hold on;
+for r = 1:size(detected_intervals,1)
+    x1 = detected_intervals(r,1);
+    x2 = detected_intervals(r,2);
+    yl = ylim;
+    patch([x1 x2 x2 x1], [yl(1) yl(1) yl(2) yl(2)], [1 0.9 0.9], 'EdgeColor','none', 'FaceAlpha',0.3);
+end
+hold off;
+
+subplot(3,1,2);
+plot(t, local_energy);
+hold on;
+plot([t(1) t(end)], [threshold threshold], '--r', 'LineWidth', 1.2);
+xlabel('Time (s)');
+ylabel('Local energy');
+title(sprintf('Local energy (window = %.2fs) and threshold (mean + %.1f*std)', energy_win_sec, k));
+xlim([t(1) t(end)]);
+legend('Local energy','Threshold');
+
+% Mark detected regions in energy plot
+for r = 1:size(detected_intervals,1)
+    x1 = detected_intervals(r,1);
+    x2 = detected_intervals(r,2);
+    yl = ylim;
+    patch([x1 x2 x2 x1], [yl(1) yl(1) yl(2) yl(2)], [1 0.9 0.9], 'EdgeColor','none', 'FaceAlpha',0.3);
+end
+hold off;
+
+% zoom on a single burst (if available) for clarity
+subplot(3,1,3);
+if ~isempty(detected_intervals)
+    % choose first detected event to zoom
+    zstart = max(detected_intervals(1,1) - 0.5, t(1));
+    zend   = min(detected_intervals(1,2) + 0.5, t(end));
+else
+    zstart = 2; zend = 4;
+end
+iz = t >= zstart & t <= zend;
+plot(t(iz), eeg_alpha(iz), 'b'); hold on;
+plot(t(iz), local_energy(iz), 'k'); % energy (not scaled) - different units
+yyaxis right;
+plot(t(iz), local_energy(iz), 'k');
+ylabel('Local energy');
+yyaxis left;
+xlabel('Time (s)');
+ylabel('\muV');
+title(sprintf('Zoom: %.2f - %.2f s', zstart, zend));
+xlim([zstart zend]);
+legend('Alpha filtered signal','Local energy (right axis)');
+
+%% --- Optional: pack results into structure for later use ---
+results.detected_intervals = detected_intervals;
+results.durations = durations;
+results.threshold = threshold;
+results.local_energy = local_energy;
+results.fs = fs;
+results.energy_win_sec = energy_win_sec;
+
+% Return 'results' to workspace
+assignin('base', 'alpha_detection_results', results);
+
+fprintf('Detection results saved to ''alpha_detection_results'' in workspace.\n');
+fprintf('Threshold = %.4e (mean = %.4e, std = %.4e)\n', threshold, mu, sigma);
+
 
