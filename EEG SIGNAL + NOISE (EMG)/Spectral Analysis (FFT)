@@ -1,1 +1,128 @@
+clearvars; close all; clc;
+
+fs = 250;                   % sampling frequency
+t = 0:1/fs:20;              % time vector
+N = length(t);
+rng(0);
+
+% base EEG (broadband noise)
+eeg = 0.8 * randn(1, N);
+
+% alpha bursts (10 Hz)
+alpha_freq = 10;
+alpha_wave = sin(2*pi*alpha_freq*t);
+alpha_periods = [2 3; 6 7; 9 10; 13 14; 18 19];
+for i = 1:size(alpha_periods,1)
+    idx = (t >= alpha_periods(i,1)) & (t <= alpha_periods(i,2));
+    eeg(idx) = eeg(idx) + alpha_wave(idx);
+end
+
+% Add bursty EMG (band-limited 20-80 Hz modulated by envelope)
+emg_amp = 0.6;
+white_noise = randn(1, N);
+[b_emg, a_emg] = butter(4, [20 80]/(fs/2), 'bandpass');
+emg_bandlimited = filtfilt(b_emg, a_emg, white_noise);
+
+% envelope to make EMG bursty
+env_raw = abs(randn(1,N));
+[b_env, a_env] = butter(2, 5/(fs/2), 'low');   % envelope ~ <5 Hz
+env = filtfilt(b_env, a_env, env_raw);
+env = env / (max(env)+eps);
+sparsity = 0.75;
+thr_env = quantile(env, 1 - sparsity);
+env = env .* (env > thr_env);
+env = filtfilt(b_env, a_env, env);
+env = env / (max(env)+eps);
+
+emg_noise = emg_amp * (emg_bandlimited .* env);
+
+% noisy EEG
+eeg_noisy = eeg + emg_noise;
+
+%FFT (one-sided power spectrum)
+Y = fft(eeg_noisy);
+% two-sided power (not exactly PSD but proportional)
+P2 = (abs(Y).^2) / N;
+halfN = floor(N/2);
+P1 = P2(1:halfN+1);
+P1(2:end-1) = 2 * P1(2:end-1);           % one-sided power
+f = (0:halfN) * (fs / N);
+
+% convert to dB for plotting
+P1_db = 10*log10(P1 + eps);
+
+% Identify alpha peak and compute alpha-band power ratio 
+alpha_band = [8 12]; 
+alpha_mask = f >= alpha_band(1) & f <= alpha_band(2);
+
+% strongest frequency within alpha band
+if any(alpha_mask)
+    [alpha_peak_power, rel_idx] = max(P1(alpha_mask));
+    alpha_freqs = f(alpha_mask);
+    alpha_peak_freq = alpha_freqs(rel_idx);
+else
+    alpha_peak_power = 0;
+    alpha_peak_freq = NaN;
+end
+
+% compute power in alpha band and percent of total power (0..100)
+alpha_power = trapz(f(alpha_mask), P1(alpha_mask));
+total_power = trapz(f, P1);
+pct_alpha = 100 * alpha_power / (total_power + eps);
+
+% Plot power spectrum and mark alpha
+figure('Name','One-sided Power Spectrum','Units','normalized','Position',[0.1 0.1 0.8 0.4]);
+plot(f, P1_db, 'LineWidth', 1.2);
+xlim([0 80]);
+xlabel('Frequency (Hz)');
+ylabel('Power (dB)');
+title('One-sided Power Spectrum (EEG + EMG)');
+
+hold on;
+% shade alpha band
+yl = ylim;
+patch([alpha_band(1) alpha_band(2) alpha_band(2) alpha_band(1)], ...
+      [yl(1) yl(1) yl(2) yl(2)], [0.95 0.95 0.8], 'EdgeColor','none', 'FaceAlpha', 0.5);
+% mark alpha peak
+if ~isnan(alpha_peak_freq)
+    plot(alpha_peak_freq, 10*log10(alpha_peak_power+eps), 'ro', 'MarkerFaceColor','r');
+    text(alpha_peak_freq, 10*log10(alpha_peak_power+eps)+3, sprintf('%.2f Hz', alpha_peak_freq), ...
+         'HorizontalAlignment','center', 'FontWeight','bold');
+end
+legend('Power (dB)', 'Alpha band (8-12 Hz)', 'Alpha peak');
+
+hold off;
+
+%Print short diagnostic 
+fprintf('Alpha peak frequency (within 8-12Hz) = %.2f Hz\n', alpha_peak_freq);
+fprintf('Alpha band power = %.3e (linear units)\n', alpha_power);
+fprintf('Total power (0-%d Hz) = %.3e\n', fs/2, total_power);
+fprintf('Alpha power is %.2f%% of total power.\n', pct_alpha);
+
+% Simple visibility rule: if alpha > 2% of total power, call it "visible"
+if pct_alpha >= 2
+    fprintf('=> Alpha band is likely VISIBLE in the spectrum (pct_alpha >= 2%%).\n');
+elseif pct_alpha >= 0.5
+    fprintf('=> Alpha band is weak but may be detectable (0.5%% <= pct_alpha < 2%%).\n');
+else
+    fprintf('=> Alpha band is unlikely to be visible (pct_alpha < 0.5%%).\n');
+end
+
+%Optional: also show Welch PSD for a smoother estimate 
+figure('Name','Welch PSD (smoothed)','Units','normalized','Position',[0.1 0.55 0.8 0.35]);
+window = hamming(2*fs); noverlap = round(0.5*length(window)); nfft = 2048;
+[pxx,fw] = pwelch(eeg_noisy, window, noverlap, nfft, fs);
+plot(fw, 10*log10(pxx), 'LineWidth', 1.2); xlim([0 80]);
+xlabel('Frequency (Hz)'); ylabel('Power (dB/Hz)');
+title('Welch PSD (EEG + EMG)');
+hold on;
+yl = ylim;
+patch([alpha_band(1) alpha_band(2) alpha_band(2) alpha_band(1)], [yl(1) yl(1) yl(2) yl(2)], ...
+      [0.95 0.95 0.8], 'EdgeColor','none', 'FaceAlpha', 0.5);
+hold off;
+
+
+
+
+
 
