@@ -1,1 +1,19 @@
+%Butterworth Band-Pass Filter to Isolate the Alpha Band (8–12 Hz)
+
+alpha_band = [8 12];          % Hz
+filter_order = 4;             % typical EEG filter order
+
+% design the Butterworth filter
+[b_alpha, a_alpha] = butter(filter_order, alpha_band/(fs/2), 'bandpass');
+
+% apply zero-phase filtering using filtfilt
+eeg_alpha = filtfilt(b_alpha, a_alpha, eeg_noisy);
+
+%Plot the filtered output 
+figure('Name', 'Alpha Band (8–12 Hz) Filtered Signal');
+plot(t, eeg_alpha, 'LineWidth', 1.1);
+xlabel('Time (s)');
+ylabel('Amplitude (\muV)');
+title('EEG After Band-Pass Filtering (Alpha: 8–12 Hz)');
+grid on;
 
