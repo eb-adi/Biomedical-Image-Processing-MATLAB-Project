@@ -1,1 +1,80 @@
+% Given signal
+fs = 250;             
+t = 0:1/fs:20;       
+N = length(t);
+
+eeg = 0.8*randn(1, N);
+
+alpha_freq = 10;
+alpha_wave = sin(2*pi*alpha_freq*t);
+
+alpha_periods = [2 3; 6 7; 9 10; 13 14; 18 19];
+for i = 1:size(alpha_periods,1)
+    idx = (t >= alpha_periods(i,1)) & (t <= alpha_periods(i,2));
+    eeg(idx) = eeg(idx) + alpha_wave(idx);
+end
+
+% Plot time signal (already in your code)
+figure;
+plot(t, eeg)
+xlabel('Temps (s)')
+ylabel('Amplitude (µV)')
+title('Signal EEG simulé')
+
+%% FFT and power spectrum (one-sided)
+Y = fft(eeg);
+P2 = (abs(Y).^2) / N;         % two-sided power
+P1 = P2(1:floor(N/2)+1);     % one-sided
+P1(2:end-1) = 2*P1(2:end-1); % account for dropped half
+
+f = (0:floor(N/2)) * (fs / N);
+
+% Plot power spectrum
+figure;
+plot(f, 10*log10(P1)); % show in dB for clarity
+xlim([0 50])           % show up to 50 Hz (EEG interest)
+xlabel('Frequency (Hz)')
+ylabel('Power (dB)')
+title('One-sided power spectrum')
+hold on
+
+% Shade alpha band and annotate
+alpha_band = [8 12];
+yl = ylim;
+patch([alpha_band(1) alpha_band(2) alpha_band(2) alpha_band(1)], ...
+      [yl(1) yl(1) yl(2) yl(2)], ...
+      [0.9 0.9 0.9], 'EdgeColor', 'none', 'FaceAlpha', 0.3);
+text(mean(alpha_band), yl(2)*0.9, 'Alpha band (8-12 Hz)', 'HorizontalAlignment','center');
+
+% Find peak within alpha band
+alpha_idx = find(f >= alpha_band(1) & f <= alpha_band(2));
+[alpha_peak_power, rel_idx] = max(P1(alpha_idx));
+alpha_peak_freq = f(alpha_idx(rel_idx));
+
+% Mark the alpha peak
+plot(alpha_peak_freq, 10*log10(alpha_peak_power), 'ro', 'MarkerSize',8, 'LineWidth',1.5)
+legend('Power spectrum','Alpha band','Alpha peak')
+
+% Display result in command window
+fprintf('Alpha peak frequency = %.2f Hz, power = %.3e (linear)\n', alpha_peak_freq, alpha_peak_power);
+
+% Optional: Spectrogram to see time-localized alpha bursts
+window_sec = 1; % 1-second window
+window = round(window_sec * fs);
+noverlap = round(0.9 * window); % high overlap for fine time resolution
+nfft = 1024;
+
+figure;
+[s,f_s,t_s,p] = spectrogram(eeg, window, noverlap, nfft, fs, 'yaxis');
+% Convert p to dB
+p_db = 10*log10(abs(p));
+surf(t_s, f_s, p_db, 'EdgeColor','none');
+axis xy;
+view(0,90);
+xlim([0 max(t_s)])
+ylim([0 30])
+xlabel('Time (s)')
+ylabel('Frequency (Hz)')
+title('Spectrogram (dB) — look for energy around 8-12 Hz during alpha bursts')
+colorbar
 
