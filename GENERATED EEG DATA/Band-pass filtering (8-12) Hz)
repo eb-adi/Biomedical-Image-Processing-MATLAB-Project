@@ -1,1 +1,110 @@
+%simulate EEG (your original block)
+fs = 250;             
+t = 0:1/fs:20;       
+N = length(t);
+
+rng(0); % for reproducibility (optional)
+eeg = 0.8*randn(1, N);
+
+alpha_freq = 10;
+alpha_wave = sin(2*pi*alpha_freq*t);
+
+alpha_periods = [2 3; 6 7; 9 10; 13 14; 18 19];
+for i = 1:size(alpha_periods,1)
+    idx = (t >= alpha_periods(i,1)) & (t <= alpha_periods(i,2));
+    eeg(idx) = eeg(idx) + alpha_wave(idx);
+end
+
+figure('Name','Raw EEG'); 
+plot(t, eeg);
+xlabel('Time (s)')
+ylabel('Amplitude (\muV)')
+title('Simulated EEG (raw)')
+
+%% Butterworth bandpass filter (alpha 8-12 Hz)
+alpha_band = [8 12];            % alpha band in Hz
+order = 4;                      % Butterworth filter order (typical: 2-4)
+Wn = alpha_band / (fs/2);       % normalized cutoffs (Nyquist)
+[b,a] = butter(order, Wn, 'bandpass');
+
+% Zero-phase filtering (no phase distortion)
+eeg_alpha = filtfilt(b, a, eeg);
+
+%% Plot original vs filtered (whole signal)
+figure('Name','Original vs Alpha-filtered (whole)');
+plot(t, eeg, 'Color', [0.7 0.7 0.7]); hold on
+plot(t, eeg_alpha, 'b', 'LineWidth', 1.2);
+xlabel('Time (s)')
+ylabel('Amplitude (\muV)')
+title('Original EEG (grey) and Alpha-band (8-12 Hz) filtered (blue)')
+legend('Original EEG','Alpha (8-12 Hz)')
+
+%% Zoom on a single alpha burst for clarity (e.g. 2-4 s)
+tzoom = [2 4];
+idxzoom = t >= tzoom(1) & t <= tzoom(2);
+figure('Name','Zoom on an alpha burst');
+plot(t(idxzoom), eeg(idxzoom), 'Color', [0.7 0.7 0.7]); hold on
+plot(t(idxzoom), eeg_alpha(idxzoom), 'b', 'LineWidth', 1.4);
+xlabel('Time (s)')
+ylabel('Amplitude (\muV)')
+title(sprintf('Zoom: %d–%d s (alpha burst region)', tzoom(1), tzoom(2)))
+legend('Original','Filtered (alpha)')
+
+%% PSD estimate using Welch (original and filtered)
+window = hamming(2*fs);      % 2-second window
+noverlap = round(0.5*length(window));
+nfft = 2048;
+
+[pxx_orig, f] = pwelch(eeg, window, noverlap, nfft, fs);
+[pxx_filt, ~]   = pwelch(eeg_alpha, window, noverlap, nfft, fs);
+
+figure('Name','Power Spectral Density (Welch)');
+plot(f,10*log10(pxx_orig), 'Color', [0.7 0.7 0.7]); hold on;
+plot(f,10*log10(pxx_filt), 'b', 'LineWidth', 1.2);
+xlim([0 50]);
+xlabel('Frequency (Hz)');
+ylabel('Power (dB/Hz)');
+title('PSD: Original (grey) and Alpha-filtered (blue)');
+legend('Original','Alpha filtered');
+
+% Shade alpha band
+yl = ylim;
+patch([alpha_band(1) alpha_band(2) alpha_band(2) alpha_band(1)],...
+      [yl(1) yl(1) yl(2) yl(2)], [0.9 0.9 0.9], 'EdgeColor','none', 'FaceAlpha', 0.3);
+text(mean(alpha_band), yl(2)*0.9, 'Alpha (8-12 Hz)', 'HorizontalAlignment','center');
+
+%% Compute alpha-band power and percent of total power (from Welch PSD)
+alpha_idx = f >= alpha_band(1) & f <= alpha_band(2);
+alpha_power_orig = trapz(f(alpha_idx), pxx_orig(alpha_idx));
+total_power_orig = trapz(f, pxx_orig);
+pct_alpha_orig = 100 * alpha_power_orig / total_power_orig;
+
+alpha_power_filt = trapz(f(alpha_idx), pxx_filt(alpha_idx));
+total_power_filt = trapz(f, pxx_filt);
+pct_alpha_filt = 100 * alpha_power_filt / total_power_filt;
+
+fprintf('Original signal: alpha power = %.4e, total power = %.4e, alpha%% = %.2f%%\n', ...
+    alpha_power_orig, total_power_orig, pct_alpha_orig);
+fprintf('Filtered signal: alpha power = %.4e, total power = %.4e, alpha%% = %.2f%%\n', ...
+    alpha_power_filt, total_power_filt, pct_alpha_filt);
+
+%% Optional: Spectrogram of filtered signal to visualize bursts over time
+window_s = round(1*fs);   % 1 s window
+noverlap_s = round(0.9*window_s);
+nfft_s = 1024;
+
+figure('Name','Spectrogram (filtered)');
+[s,f_s,t_s,p] = spectrogram(eeg_alpha, window_s, noverlap_s, nfft_s, fs);
+imagesc(t_s, f_s, 10*log10(abs(p)));
+axis xy;
+ylim([0 30]);
+xlabel('Time (s)');
+ylabel('Frequency (Hz)');
+title('Spectrogram of Alpha-filtered signal (dB)');
+colorbar;
+caxis([prctile(10*log10(abs(p(:))),5) prctile(10*log10(abs(p(:))),99)]) % improve contrast
+
+Notes:
+filtfilt is used to avoid phase distortion; if you use filter(b,a,eeg) you'll get phase shift.
+If you want more robust band-power estimates, you can also use bandpower(eeg, fs, [8 12]) if your MATLAB has Signal Processing Toolbox.
 
