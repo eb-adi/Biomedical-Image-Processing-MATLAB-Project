@@ -1,14 +1,14 @@
 clearvars; close all; clc;
 
-fs = 250;                   % sampling frequency
-t = 0:1/fs:20;              % time vector
+fs = 250;                 
+t = 0:1/fs:20;             
 N = length(t);
 rng(0);
 
-% base EEG (broadband noise)
+
 eeg = 0.8 * randn(1, N);
 
-% alpha bursts (10 Hz)
+
 alpha_freq = 10;
 alpha_wave = sin(2*pi*alpha_freq*t);
 alpha_periods = [2 3; 6 7; 9 10; 13 14; 18 19];
