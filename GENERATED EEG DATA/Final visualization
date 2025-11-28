@@ -1,1 +1,95 @@
+if ~exist('t','var') || ~exist('eeg','var') || ~exist('fs','var')
+    fs = 250;
+    t = 0:1/fs:20;
+    N = length(t);
+    rng(0);
+    eeg = 0.8*randn(1,N);
+    alpha_freq = 10;
+    alpha_wave = sin(2*pi*alpha_freq*t);
+    alpha_periods = [2 3; 6 7; 9 10; 13 14; 18 19];
+    for i = 1:size(alpha_periods,1)
+        idx = (t >= alpha_periods(i,1)) & (t <= alpha_periods(i,2));
+        eeg(idx) = eeg(idx) + alpha_wave(idx);
+    end
+end
+
+% --- ensure alpha-filtered signal exists ---
+if ~exist('eeg_alpha','var')
+    alpha_band = [8 12];
+    order = 4;
+    Wn = alpha_band/(fs/2);
+    [b,a] = butter(order, Wn, 'bandpass');
+    eeg_alpha = filtfilt(b,a,eeg);
+end
+
+
+if ~exist('alpha_idx','var') || length(alpha_idx) ~= length(t)
+    energy_win_sec = 0.2; % choose your preferred window
+    k = 1.0;               % threshold factor
+    window_samples = max(1, round(energy_win_sec*fs));
+    local_energy = conv(eeg_alpha.^2, ones(1,window_samples)/window_samples, 'same');
+    threshold = mean(local_energy) + k*std(local_energy);
+    alpha_idx = local_energy > threshold;
+end
+
+% Quick check: if no detections, warn user
+if ~any(alpha_idx)
+    warning('No detected alpha regions (alpha_idx all false). Try lowering threshold or increasing amplitude.');
+end
+
+% --- Plotting: make the raw EEG faint, highlight regions, plot filtered signal bold ---
+figure('Color','w','Position',[100 100 1100 450]);
+hold on;
+
+% 1) Plot shaded patches for detected intervals (draw them first but with alpha so visible)
+connected = bwconncomp(alpha_idx);
+for k = 1:connected.NumObjects
+    idx_k = connected.PixelIdxList{k};
+    x1 = t(idx_k(1));
+    x2 = t(idx_k(end));
+    % draw a filled patch for the time interval spanning the detection
+    p = patch([x1 x2 x2 x1], [min(eeg)-0.3 max(eeg)+0.3 max(eeg)+0.3 min(eeg)-0.3], ...
+              [1 0.85 0.85], 'EdgeColor','none');
+    set(p,'FaceAlpha',0.6);
+end
+
+% 2) Plot raw EEG (thin and light color)
+plot(t, eeg, 'Color', [0.6 0.8 1], 'LineWidth', 0.6);
+
+% 3) Plot filtered alpha signal on top (bold color)
+plot(t, eeg_alpha, 'r', 'LineWidth', 1.5);
+
+% 4) Also mark start/end with vertical lines for clarity
+for k = 1:connected.NumObjects
+    idx_k = connected.PixelIdxList{k};
+    x1 = t(idx_k(1));
+    x2 = t(idx_k(end));
+    plot([x1 x1], ylim, '--', 'Color', [0.6 0 0], 'LineWidth', 0.8);
+    plot([x2 x2], ylim, '--', 'Color', [0.6 0 0], 'LineWidth', 0.8);
+end
+
+xlabel('Time (s)');
+ylabel('Amplitude (\muV)');
+title('EEG (light)  +  Alpha-filtered (red)  +  Detected alpha regions (shaded)');
+legend({'Detected Regions','Raw EEG','Alpha (8-12 Hz)'}, 'Location','northeast');
+xlim([t(1) t(end)]);
+hold off;
+
+
+if connected.NumObjects >= 1
+    idx_k = connected.PixelIdxList{1};
+    xstart = max(t(1), t(idx_k(1)) - 0.5);
+    xend   = min(t(end),  t(idx_k(end)) + 0.5);
+    figure('Color','w','Position',[200 200 700 300]);
+    plot(t, eeg, 'Color', [0.85 0.95 1], 'LineWidth', 0.6); hold on;
+    % patch for first region
+    patch([xstart xend xend xstart], [min(eeg)-0.2 min(eeg)-0.2 max(eeg)+0.2 max(eeg)+0.2], ...
+          [1 0.9 0.9],'EdgeColor','none','FaceAlpha',0.6);
+    plot(t, eeg_alpha, 'r', 'LineWidth', 1.6);
+    xlabel('Time (s)');
+    ylabel('Amplitude (\muV)');
+    title(sprintf('Zoom on first detected alpha region: %.2f - %.2f s', xstart, xend));
+    xlim([xstart xend]);
+    hold off;
+end
 
