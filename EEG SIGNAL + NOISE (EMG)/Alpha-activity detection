@@ -1,1 +1,133 @@
+%Local energy detection for eeg_alpha (adaptive threshold)
+clearvars -except eeg_alpha eeg_noisy eeg t fs; close all;
+
+% If essential variables missing, regenerate simulation + filter (safe-guard)
+if ~exist('t','var') || ~exist('fs','var') || ~exist('eeg_alpha','var')
+    fs = 250;
+    t = 0:1/fs:20;
+    N = length(t);
+    rng(0);
+    eeg = 0.8*randn(1,N);
+    alpha_freq = 10;
+    alpha_wave = sin(2*pi*alpha_freq*t);
+    alpha_periods = [2 3; 6 7; 9 10; 13 14; 18 19];
+    for i = 1:size(alpha_periods,1)
+        idx = (t >= alpha_periods(i,1)) & (t <= alpha_periods(i,2));
+        eeg(idx) = eeg(idx) + alpha_wave(idx);
+    end
+    % add mild EMG for realism (optional)
+    emg_amp = 0.3;
+    [b_emg,a_emg] = butter(4, [20 80]/(fs/2), 'bandpass');
+    emg_noise = emg_amp * filtfilt(b_emg, a_emg, randn(1,N));
+    eeg_noisy = eeg + emg_noise;
+    % design alpha filter and apply
+    alpha_band = [8 12];
+    [b,a] = butter(4, alpha_band/(fs/2), 'bandpass');
+    eeg_alpha = filtfilt(b,a,eeg_noisy);
+    fprintf('Regenerated eeg_alpha for detection (safe-guard).\n');
+end
+
+%% Parameters (tweakable)
+energy_win_sec = 0.20;    % local energy window in seconds (short-time energy)
+k = 1.0;                  % threshold factor (mean + k*std)
+min_dur = 0.20;           % minimum event duration to keep (seconds)
+
+%% Compute local energy (moving average of squared signal)
+window_samples = max(1, round(energy_win_sec * fs));
+% use conv for same-length result
+local_energy = conv(eeg_alpha .^ 2, ones(1,window_samples)/window_samples, 'same');
+
+% Adaptive threshold
+mu = mean(local_energy);
+sigma = std(local_energy);
+threshold = mu + k * sigma;
+
+% Logical mask of where energy exceeds threshold
+is_high = local_energy > threshold;
+
+% Remove short events (morphological)
+min_samples = round(min_dur * fs);
+cc = bwconncomp(is_high);
+keep_mask = false(size(is_high));
+for i = 1:cc.NumObjects
+    if numel(cc.PixelIdxList{i}) >= min_samples
+        keep_mask(cc.PixelIdxList{i}) = true;
+    end
+end
+is_high = keep_mask;
+cc = bwconncomp(is_high);
+
+% Build start/end times and durations
+if cc.NumObjects == 0
+    intervals = zeros(0,2);
+else
+    starts = cellfun(@(c) c(1), cc.PixelIdxList);
+    ends   = cellfun(@(c) c(end), cc.PixelIdxList);
+    intervals = [ (starts-1)'/fs , (ends-1)'/fs ];
+end
+durations = intervals(:,2) - intervals(:,1);
+
+% Print detections
+fprintf('\nDetected %d alpha events (threshold = mean + %.2f*std):\n', size(intervals,1), k);
+if isempty(intervals)
+    fprintf('  None. Try lowering k or increasing alpha amplitude.\n');
+else
+    for iEvt = 1:size(intervals,1)
+        fprintf('  %d) Start = %.3fs, End = %.3fs, Duration = %.3fs\n', ...
+            iEvt, intervals(iEvt,1), intervals(iEvt,2), durations(iEvt));
+    end
+end
+fprintf('Threshold = %.4e, Mean energy = %.4e, Std energy = %.4e\n', threshold, mu, sigma);
+
+% Save results
+alpha_detection_results.intervals = intervals;
+alpha_detection_results.durations = durations;
+alpha_detection_results.threshold = threshold;
+alpha_detection_results.local_energy = local_energy;
+alpha_detection_results.fs = fs;
+alpha_detection_results.energy_win_sec = energy_win_sec;
+assignin('base','alpha_detection_results', alpha_detection_results);
+fprintf('Results saved as ''alpha_detection_results'' in workspace.\n');
+
+%% Plots
+% 1) Filtered signal with shaded detections
+figure('Name','Alpha detection: filtered signal and detected regions','Units','normalized','Position',[0.05 0.1 0.9 0.35]);
+hold on;
+% plot shaded patches first
+for i = 1:cc.NumObjects
+    idx = cc.PixelIdxList{i};
+    x1 = t(idx(1));
+    x2 = t(idx(end));
+    % patch spanning the whole amplitude range for visibility
+    y1 = min(eeg_alpha) - 0.2*range(eeg_alpha);
+    y2 = max(eeg_alpha) + 0.2*range(eeg_alpha);
+    p = patch([x1 x2 x2 x1], [y1 y1 y2 y2], [1 0.85 0.85], 'EdgeColor','none');
+    set(p,'FaceAlpha',0.6);
+end
+% plot filtered EEG on top
+plot(t, eeg_alpha, 'r', 'LineWidth', 1.4);
+xlabel('Time (s)');
+ylabel('Amplitude (\muV)');
+title('Alpha-filtered signal (8-12 Hz) with detected alpha-wave regions shaded');
+xlim([t(1) t(end)]);
+legend({'Detected regions','Alpha-filtered'}, 'Location','northeast');
+hold off;
+
+% 2) Local energy and threshold
+figure('Name','Local energy & threshold','Units','normalized','Position',[0.05 0.5 0.9 0.35]);
+plot(t, local_energy, 'b', 'LineWidth', 1.1); hold on;
+plot(t, threshold * ones(size(t)), '--r', 'LineWidth', 1.3);
+% shade detected intervals in the energy plot too
+for i = 1:cc.NumObjects
+    idx = cc.PixelIdxList{i};
+    x1 = t(idx(1));
+    x2 = t(idx(end));
+    patch([x1 x2 x2 x1], [min(local_energy) min(local_energy) max(local_energy) max(local_energy)], ...
+          [1 0.9 0.9], 'EdgeColor','none', 'FaceAlpha', 0.5);
+end
+xlabel('Time (s)');
+ylabel('Local energy');
+title(sprintf('Local energy (window = %.2fs) and adaptive threshold (mean + %.2f*std)', energy_win_sec, k));
+xlim([t(1) t(end)]);
+hold off;
 
